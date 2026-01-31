@@ -2,125 +2,150 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Web Dashcam (GitHub Pages)</title>
+    <!-- ビューポート設定：ズーム禁止とセーフエリア対応 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Mobile Dashcam</title>
     <style>
-        body {
+        /* 基本設定 */
+        html, body {
             margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
             background-color: #000;
-            color: #fff;
-            font-family: sans-serif;
             overflow: hidden; /* スクロール禁止 */
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
+            font-family: sans-serif;
+            color: white;
         }
 
-        /* ビデオ表示エリア */
+        /* ビデオを全画面背景として配置 */
         #video-container {
-            position: relative;
-            flex-grow: 1;
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100%;
-            background: #111;
-            overflow: hidden;
+            height: 100%;
+            z-index: 1; /* 最背面 */
+            background: #000;
         }
 
         video {
             width: 100%;
             height: 100%;
-            object-fit: cover;
+            object-fit: cover; /* 画面いっぱいに広げる */
         }
 
-        /* オーバーレイ情報（速度など） */
+        /* 速度などのオーバーレイ（ビデオの上） */
         .overlay {
             position: absolute;
             top: 10px;
             left: 10px;
-            text-shadow: 1px 1px 2px black;
             z-index: 10;
+            text-shadow: 2px 2px 4px #000;
+            background-color: rgba(0,0,0,0.3); /* 文字を見やすく */
+            padding: 5px;
+            border-radius: 4px;
+            pointer-events: none; /* タップを透過させる */
         }
 
         #speed-display {
-            font-size: 3rem;
+            font-size: 2.5rem; /* スマホ向けに少し調整 */
             font-weight: bold;
             color: #00ffcc;
         }
 
         #status-display {
-            font-size: 1rem;
+            font-size: 0.9rem;
             color: #ffcc00;
         }
 
-        /* 操作パネル */
+        /* 操作パネル（画面最下部に固定・最前面） */
         #controls {
-            height: 120px;
-            background: rgba(20, 20, 20, 0.9);
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px; /* 高さ固定 */
+            background: rgba(0, 0, 0, 0.6); /* 半透明 */
             display: flex;
             justify-content: space-around;
             align-items: center;
-            padding: 10px;
-            z-index: 20;
+            z-index: 100; /* 確実に一番手前に表示 */
+            
+            /* iPhoneのホームバー(下部の線)対策 */
+            padding-bottom: env(safe-area-inset-bottom); 
+            box-sizing: content-box;
         }
 
+        /* ボタンのデザイン */
         button {
-            border: none;
+            border: 2px solid rgba(255,255,255,0.3);
             border-radius: 50%;
             color: white;
             font-weight: bold;
             cursor: pointer;
             outline: none;
-            transition: transform 0.1s;
+            /* タップ時の反応を良くする */
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
+        /* 押したときのアニメーション */
         button:active {
-            transform: scale(0.95);
+            transform: scale(0.9);
+            background-color: rgba(255,255,255,0.2);
         }
 
         .btn-start {
-            width: 80px;
-            height: 80px;
+            width: 70px;
+            height: 70px;
             background: #28a745;
-            font-size: 14px;
+            font-size: 13px;
         }
 
         .btn-save {
-            width: 90px;
-            height: 90px;
-            background: #dc3545; /* Red */
-            font-size: 16px;
-            display: none; /* 最初は隠す */
-            box-shadow: 0 0 10px #ff0000;
+            width: 80px;
+            height: 80px;
+            background: #dc3545;
+            font-size: 15px;
+            display: none;
+            box-shadow: 0 0 15px rgba(220, 53, 69, 0.6);
         }
 
         .btn-switch {
-            width: 60px;
-            height: 60px;
+            width: 50px;
+            height: 50px;
             background: #007bff;
-            font-size: 12px;
+            font-size: 11px;
         }
 
+        /* ログエリア */
         .log-area {
             position: absolute;
-            bottom: 130px;
+            bottom: 120px; /* コントロールパネルの上 */
             left: 10px;
             right: 10px;
-            height: 50px;
-            overflow-y: auto;
-            font-size: 0.8rem;
+            height: 60px;
+            overflow-y: hidden;
+            font-size: 0.7rem;
             color: rgba(255,255,255,0.7);
-            pointer-events: none;
+            z-index: 5;
+            pointer-events: none; /* ここをタップしても裏の映像には影響しない */
+            text-shadow: 1px 1px 1px black;
         }
 
-        /* 保存中の点滅アニメーション */
+        /* 録画中の赤丸 */
         .recording-indicator {
             position: absolute;
             top: 20px;
             right: 20px;
-            width: 20px;
-            height: 20px;
+            width: 15px;
+            height: 15px;
             background-color: red;
             border-radius: 50%;
             display: none;
+            z-index: 15;
+            box-shadow: 0 0 5px red;
         }
         .blink {
             animation: blinker 1s linear infinite;
@@ -128,47 +153,47 @@
         @keyframes blinker {
             50% { opacity: 0; }
         }
-
     </style>
 </head>
 <body>
 
     <div id="video-container">
+        <!-- playsinlineはiOSで必須 -->
         <video id="preview" autoplay playsinline muted></video>
-        
-        <div class="overlay">
-            <div id="speed-display">0 km/h</div>
-            <div id="status-display">待機中</div>
-        </div>
-
-        <div id="recording-dot" class="recording-indicator"></div>
-        <div id="logs" class="log-area"></div>
     </div>
+        
+    <div class="overlay">
+        <div id="speed-display">--- km/h</div>
+        <div id="status-display">待機中</div>
+    </div>
+
+    <div id="recording-dot" class="recording-indicator"></div>
+    <div id="logs" class="log-area"></div>
 
     <div id="controls">
         <button id="btn-switch" class="btn-switch">カメラ<br>切替</button>
-        <button id="btn-start" class="btn-start">ドラレコ<br>開始</button>
-        <button id="btn-save" class="btn-save">今すぐ<br>保存</button>
+        <button id="btn-start" class="btn-start">開始</button>
+        <button id="btn-save" class="btn-save">保存</button>
     </div>
 
 <script>
-    // 設定
-    const PRE_RECORD_SECONDS = 60; // イベント前の保存秒数
-    const POST_RECORD_SECONDS = 60; // イベント後の保存秒数
-    const CHUNK_DURATION_MS = 1000; // 1秒ごとにデータを区切る
+    // --- 設定 ---
+    const PRE_RECORD_SECONDS = 60;
+    const POST_RECORD_SECONDS = 60;
+    const CHUNK_DURATION_MS = 1000;
 
-    // 変数
+    // --- 変数 ---
     let stream = null;
     let mediaRecorder = null;
     let watchId = null;
-    let chunksBuffer = []; // 直近のデータを貯める配列（リングバッファ的役割）
+    let chunksBuffer = [];
     let isSavingEvent = false;
     let eventChunks = [];
     let postRecordCounter = 0;
-    let currentFacingMode = 'environment'; // 'environment'(背面) or 'user'(前面)
+    let currentFacingMode = 'environment'; // 'environment' or 'user'
     let wakeLock = null;
 
-    // DOM要素
+    // --- DOM要素 ---
     const videoEl = document.getElementById('preview');
     const speedEl = document.getElementById('speed-display');
     const statusEl = document.getElementById('status-display');
@@ -178,67 +203,92 @@
     const recDot = document.getElementById('recording-dot');
     const logArea = document.getElementById('logs');
 
-    // ログ出力用
+    // --- ユーティリティ ---
     function log(msg) {
         const div = document.createElement('div');
-        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        const time = new Date().toLocaleTimeString('ja-JP', { hour12: false });
+        div.textContent = `[${time}] ${msg}`;
         logArea.prepend(div);
-        if(logArea.children.length > 5) logArea.lastChild.remove();
+        if(logArea.children.length > 4) logArea.lastChild.remove();
+        console.log(msg);
     }
 
-    // 画面ロック無効化 (Wake Lock API)
+    // --- Wake Lock (画面常時点灯) ---
     async function requestWakeLock() {
-        try {
-            wakeLock = await navigator.wakeLock.request('screen');
-            log("画面スリープを無効化しました");
-        } catch (err) {
-            log(`Wake Lock Error: ${err.name}, ${err.message}`);
+        if ('wakeLock' in navigator) {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+                log("画面スリープ防止ON");
+            } catch (err) {
+                log("WakeLock失敗: " + err.message);
+            }
         }
     }
 
-    // カメラ起動
+    // --- カメラ処理 ---
     async function startCamera() {
         if (stream) {
             stream.getTracks().forEach(track => track.stop());
         }
 
         const constraints = {
-            audio: true,
+            audio: true, // 音声も録音
             video: {
-                facingMode: currentFacingMode,
+                facingMode: { exact: currentFacingMode }, // exactを使うと切替が確実
                 width: { ideal: 1280 },
                 height: { ideal: 720 }
             }
         };
 
+        // PCなどexact非対応環境へのフォールバック
         try {
             stream = await navigator.mediaDevices.getUserMedia(constraints);
-            videoEl.srcObject = stream;
-            
-            // レコーダーの準備
-            setupRecorder();
-            log("カメラ起動完了");
-        } catch (err) {
-            alert("カメラの起動に失敗しました: " + err);
+        } catch (e) {
+            // exact指定で失敗した場合は緩い指定で再トライ
+            constraints.video.facingMode = currentFacingMode;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (err) {
+                alert("カメラ起動エラー: " + err.message);
+                return;
+            }
         }
+
+        videoEl.srcObject = stream;
+        
+        // 映像がロードされたら再生を確実にする
+        videoEl.onloadedmetadata = () => {
+            videoEl.play();
+        };
+
+        setupRecorder();
+        log(currentFacingMode === 'environment' ? "背面カメラ" : "前面カメラ");
     }
 
-    // レコーダー設定 (MediaRecorder)
+    // --- 録画処理 (MediaRecorder) ---
     function setupRecorder() {
-        // 対応MIMEタイプの確認
-        let mimeType = 'video/webm;codecs=vp9';
-        if (!MediaRecorder.isTypeSupported(mimeType)) {
-            mimeType = 'video/webm;codecs=vp8';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                mimeType = 'video/mp4'; // Safari用（一部対応）
-                if(!MediaRecorder.isTypeSupported(mimeType)) {
-                     mimeType = ''; // ブラウザのデフォルトに任せる
-                }
+        let mimeType = '';
+        const types = [
+            'video/webm;codecs=vp9',
+            'video/webm;codecs=vp8',
+            'video/mp4' // iOS 14.5+ 対応
+        ];
+
+        for (const t of types) {
+            if (MediaRecorder.isTypeSupported(t)) {
+                mimeType = t;
+                break;
             }
         }
 
         const options = mimeType ? { mimeType } : {};
-        mediaRecorder = new MediaRecorder(stream, options);
+        
+        try {
+            mediaRecorder = new MediaRecorder(stream, options);
+        } catch (e) {
+            alert("録画の初期化に失敗: " + e.message);
+            return;
+        }
 
         mediaRecorder.ondataavailable = (e) => {
             if (e.data && e.data.size > 0) {
@@ -246,102 +296,97 @@
             }
         };
 
-        // 1秒ごとにデータを吐き出す設定で開始
         mediaRecorder.start(CHUNK_DURATION_MS);
-        log("ループ録画開始");
         recDot.style.display = 'block';
         recDot.classList.add('blink');
-        statusEl.textContent = "常時録画中 (バッファリング)";
+        statusEl.textContent = "録画中 (バッファ)";
+        statusEl.style.color = '#ffcc00';
     }
 
-    // 録画データのハンドリング
     function handleDataAvailable(dataBlob) {
-        // 現在の速度情報をBlobにメタデータとして付与するのは難しいため
-        // 簡易的にこの時点でのデータを保持する
-
         if (isSavingEvent) {
-            // イベント保存モード中：保存用配列に追加
+            // 保存モード
             eventChunks.push(dataBlob);
             postRecordCounter++;
-            
             const remaining = POST_RECORD_SECONDS - postRecordCounter;
-            statusEl.textContent = `イベント保存中... 残り ${remaining}秒`;
+            statusEl.textContent = `保存中... 残り${remaining}秒`;
+            statusEl.style.color = 'red';
 
             if (remaining <= 0) {
                 finalizeEventVideo();
             }
         } else {
-            // 通常モード：バッファに追加し、古いものを捨てる
+            // 常時録画モード（古いデータを捨てる）
             chunksBuffer.push(dataBlob);
-            // 60秒分(約60個)を超えたら古いものを削除
             if (chunksBuffer.length > PRE_RECORD_SECONDS) {
                 chunksBuffer.shift();
             }
         }
     }
 
-    // 保存ボタンが押されたときの処理
+    // --- イベント保存 ---
     function triggerSave() {
-        if (isSavingEvent) return; // 既に保存中なら無視
+        if (isSavingEvent) return;
         
         isSavingEvent = true;
         postRecordCounter = 0;
+        eventChunks = [...chunksBuffer]; // 過去データをコピー
         
-        // バッファにある過去データ(最大60秒)をイベント用配列にコピー
-        eventChunks = [...chunksBuffer];
-        
-        log("イベント検知！前後録画を開始します");
-        statusEl.style.color = 'red';
+        log("イベント保存開始");
         btnSave.disabled = true;
-        btnSave.textContent = "保存中...";
+        btnSave.textContent = "処理中";
+        btnSave.style.opacity = "0.5";
     }
 
-    // 動画ファイルの生成とダウンロード
     function finalizeEventVideo() {
-        log("録画完了。ファイルを生成中...");
-        
+        log("ファイル生成中...");
         const blob = new Blob(eventChunks, { type: 'video/webm' });
         const url = URL.createObjectURL(blob);
         
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        a.download = `dashcam_${timestamp}.webm`;
+        const now = new Date();
+        const filename = `dashcam_${now.getFullYear()}${now.getMonth()+1}${now.getDate()}_${now.getHours()}${now.getMinutes()}${now.getSeconds()}.webm`;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         
+        // クリーンアップ
         setTimeout(() => {
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
-        }, 100);
-
-        // 状態のリセット
-        isSavingEvent = false;
-        eventChunks = [];
-        statusEl.textContent = "常時録画中 (バッファリング)";
-        statusEl.style.color = '#ffcc00';
-        btnSave.disabled = false;
-        btnSave.textContent = "今すぐ\n保存";
-        log("ファイル保存完了。常時録画に戻ります。");
+            btnSave.disabled = false;
+            btnSave.textContent = "保存";
+            btnSave.style.opacity = "1";
+            
+            isSavingEvent = false;
+            eventChunks = [];
+            statusEl.textContent = "録画中 (バッファ)";
+            statusEl.style.color = '#ffcc00';
+            log("保存完了・常時録画復帰");
+        }, 1000); // スマホでの処理落ちを防ぐため少し待つ
     }
 
-    // GPS開始
+    // --- GPS ---
     function startGPS() {
         if (!navigator.geolocation) {
-            alert("GPSがサポートされていません");
+            speedEl.textContent = "GPS不可";
             return;
         }
-
         watchId = navigator.geolocation.watchPosition(
-            (position) => {
-                const speedMs = position.coords.speed; // m/s
-                // speedMsがnullの場合は0にする。m/s を km/h に変換 (x3.6)
-                const speedKmh = (speedMs && speedMs > 0) ? (speedMs * 3.6).toFixed(0) : 0;
-                speedEl.textContent = `${speedKmh} km/h`;
+            (pos) => {
+                const speed = pos.coords.speed; // m/s
+                if (speed === null || speed < 0) {
+                    speedEl.textContent = "0 km/h";
+                } else {
+                    // m/s -> km/h
+                    const kmh = (speed * 3.6).toFixed(0);
+                    speedEl.textContent = `${kmh} km/h`;
+                }
             },
             (err) => {
-                log("GPSエラー: " + err.message);
+                console.warn("GPS Error: " + err.code);
             },
             {
                 enableHighAccuracy: true,
@@ -351,33 +396,44 @@
         );
     }
 
-    // イベントリスナー設定
+    // --- イベントリスナー ---
+    
+    // 開始ボタン
     btnStart.addEventListener('click', async () => {
+        // ボタン切り替え
         btnStart.style.display = 'none';
         btnSave.style.display = 'block';
         
         await requestWakeLock();
-        await startCamera();
         startGPS();
+        await startCamera();
     });
 
-    btnSave.addEventListener('click', () => {
+    // 保存ボタン
+    btnSave.addEventListener('click', (e) => {
+        e.preventDefault(); // ダブルタップズームなどを防止
         triggerSave();
     });
 
-    btnSwitch.addEventListener('click', async () => {
-        // カメラ切り替え
+    // カメラ切替ボタン
+    btnSwitch.addEventListener('click', async (e) => {
+        e.preventDefault();
+        // カメラの反転
         currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
-        if (stream) {
-            // レコーダーを一度止めて再起動する必要がある
-            if(mediaRecorder && mediaRecorder.state !== 'inactive') {
-                mediaRecorder.stop();
-            }
-            await startCamera();
+        
+        // レコーダー停止
+        if(mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
         }
+        
+        // 少し待ってから再起動（スマホのカメラ解放待ち）
+        statusEl.textContent = "カメラ切替中...";
+        setTimeout(async () => {
+            await startCamera();
+        }, 500);
     });
 
-    // ページを離れるときにリソース解放
+    // ページ離脱時
     window.addEventListener('beforeunload', () => {
         if (watchId) navigator.geolocation.clearWatch(watchId);
     });
