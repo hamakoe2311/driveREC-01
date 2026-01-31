@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Web Dashcam (GitHub Pages)</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #000;
+            color: #fff;
+            font-family: sans-serif;
+            overflow: hidden; /* スクロール禁止 */
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ビデオ表示エリア */
+        #video-container {
+            position: relative;
+            flex-grow: 1;
+            width: 100%;
+            background: #111;
+            overflow: hidden;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* オーバーレイ情報（速度など） */
+        .overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            text-shadow: 1px 1px 2px black;
+            z-index: 10;
+        }
+
+        #speed-display {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #00ffcc;
+        }
+
+        #status-display {
+            font-size: 1rem;
+            color: #ffcc00;
+        }
+
+        /* 操作パネル */
+        #controls {
+            height: 120px;
+            background: rgba(20, 20, 20, 0.9);
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 10px;
+            z-index: 20;
+        }
+
+        button {
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            outline: none;
+            transition: transform 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        .btn-start {
+            width: 80px;
+            height: 80px;
+            background: #28a745;
+            font-size: 14px;
+        }
+
+        .btn-save {
+            width: 90px;
+            height: 90px;
+            background: #dc3545; /* Red */
+            font-size: 16px;
+            display: none; /* 最初は隠す */
+            box-shadow: 0 0 10px #ff0000;
+        }
+
+        .btn-switch {
+            width: 60px;
+            height: 60px;
+            background: #007bff;
+            font-size: 12px;
+        }
+
+        .log-area {
+            position: absolute;
+            bottom: 130px;
+            left: 10px;
+            right: 10px;
+            height: 50px;
+            overflow-y: auto;
+            font-size: 0.8rem;
+            color: rgba(255,255,255,0.7);
+            pointer-events: none;
+        }
+
+        /* 保存中の点滅アニメーション */
+        .recording-indicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 20px;
+            height: 20px;
+            background-color: red;
+            border-radius: 50%;
+            display: none;
+        }
+        .blink {
+            animation: blinker 1s linear infinite;
+        }
+        @keyframes blinker {
+            50% { opacity: 0; }
+        }
+
+    </style>
+</head>
+<body>
+
+    <div id="video-container">
+        <video id="preview" autoplay playsinline muted></video>
+        
+        <div class="overlay">
+            <div id="speed-display">0 km/h</div>
+            <div id="status-display">待機中</div>
+        </div>
+
+        <div id="recording-dot" class="recording-indicator"></div>
+        <div id="logs" class="log-area"></div>
+    </div>
+
+    <div id="controls">
+        <button id="btn-switch" class="btn-switch">カメラ<br>切替</button>
+        <button id="btn-start" class="btn-start">ドラレコ<br>開始</button>
+        <button id="btn-save" class="btn-save">今すぐ<br>保存</button>
+    </div>
+
+<script>
+    // 設定
+    const PRE_RECORD_SECONDS = 60; // イベント前の保存秒数
+    const POST_RECORD_SECONDS = 60; // イベント後の保存秒数
+    const CHUNK_DURATION_MS = 1000; // 1秒ごとにデータを区切る
+
+    // 変数
+    let stream = null;
+    let mediaRecorder = null;
+    let watchId = null;
+    let chunksBuffer = []; // 直近のデータを貯める配列（リングバッファ的役割）
+    let isSavingEvent = false;
+    let eventChunks = [];
+    let postRecordCounter = 0;
+    let currentFacingMode = 'environment'; // 'environment'(背面) or 'user'(前面)
+    let wakeLock = null;
+
+    // DOM要素
+    const videoEl = document.getElementById('preview');
+    const speedEl = document.getElementById('speed-display');
+    const statusEl = document.getElementById('status-display');
+    const btnStart = document.getElementById('btn-start');
+    const btnSave = document.getElementById('btn-save');
+    const btnSwitch = document.getElementById('btn-switch');
+    const recDot = document.getElementById('recording-dot');
+    const logArea = document.getElementById('logs');
+
+    // ログ出力用
+    function log(msg) {
+        const div = document.createElement('div');
+        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logArea.prepend(div);
+        if(logArea.children.length > 5) logArea.lastChild.remove();
+    }
+
+    // 画面ロック無効化 (Wake Lock API)
+    async function requestWakeLock() {
+        try {
+            wakeLock = await navigator.wakeLock.request('screen');
+            log("画面スリープを無効化しました");
+        } catch (err) {
+            log(`Wake Lock Error: ${err.name}, ${err.message}`);
+        }
+    }
+
+    // カメラ起動
+    async function startCamera() {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+
+        const constraints = {
+            audio: true,
+            video: {
+                facingMode: currentFacingMode,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        };
+
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            videoEl.srcObject = stream;
+            
+            // レコーダーの準備
+            setupRecorder();
+            log("カメラ起動完了");
+        } catch (err) {
+            alert("カメラの起動に失敗しました: " + err);
+        }
+    }
+
+    // レコーダー設定 (MediaRecorder)
+    function setupRecorder() {
+        // 対応MIMEタイプの確認
+        let mimeType = 'video/webm;codecs=vp9';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'video/webm;codecs=vp8';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                mimeType = 'video/mp4'; // Safari用（一部対応）
+                if(!MediaRecorder.isTypeSupported(mimeType)) {
+                     mimeType = ''; // ブラウザのデフォルトに任せる
+                }
+            }
+        }
+
+        const options = mimeType ? { mimeType } : {};
+        mediaRecorder = new MediaRecorder(stream, options);
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+                handleDataAvailable(e.data);
+            }
+        };
+
+        // 1秒ごとにデータを吐き出す設定で開始
+        mediaRecorder.start(CHUNK_DURATION_MS);
+        log("ループ録画開始");
+        recDot.style.display = 'block';
+        recDot.classList.add('blink');
+        statusEl.textContent = "常時録画中 (バッファリング)";
+    }
+
+    // 録画データのハンドリング
+    function handleDataAvailable(dataBlob) {
+        // 現在の速度情報をBlobにメタデータとして付与するのは難しいため
+        // 簡易的にこの時点でのデータを保持する
+
+        if (isSavingEvent) {
+            // イベント保存モード中：保存用配列に追加
+            eventChunks.push(dataBlob);
+            postRecordCounter++;
+            
+            const remaining = POST_RECORD_SECONDS - postRecordCounter;
+            statusEl.textContent = `イベント保存中... 残り ${remaining}秒`;
+
+            if (remaining <= 0) {
+                finalizeEventVideo();
+            }
+        } else {
+            // 通常モード：バッファに追加し、古いものを捨てる
+            chunksBuffer.push(dataBlob);
+            // 60秒分(約60個)を超えたら古いものを削除
+            if (chunksBuffer.length > PRE_RECORD_SECONDS) {
+                chunksBuffer.shift();
+            }
+        }
+    }
+
+    // 保存ボタンが押されたときの処理
+    function triggerSave() {
+        if (isSavingEvent) return; // 既に保存中なら無視
+        
+        isSavingEvent = true;
+        postRecordCounter = 0;
+        
+        // バッファにある過去データ(最大60秒)をイベント用配列にコピー
+        eventChunks = [...chunksBuffer];
+        
+        log("イベント検知！前後録画を開始します");
+        statusEl.style.color = 'red';
+        btnSave.disabled = true;
+        btnSave.textContent = "保存中...";
+    }
+
+    // 動画ファイルの生成とダウンロード
+    function finalizeEventVideo() {
+        log("録画完了。ファイルを生成中...");
+        
+        const blob = new Blob(eventChunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        a.download = `dashcam_${timestamp}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        
+        setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 100);
+
+        // 状態のリセット
+        isSavingEvent = false;
+        eventChunks = [];
+        statusEl.textContent = "常時録画中 (バッファリング)";
+        statusEl.style.color = '#ffcc00';
+        btnSave.disabled = false;
+        btnSave.textContent = "今すぐ\n保存";
+        log("ファイル保存完了。常時録画に戻ります。");
+    }
+
+    // GPS開始
+    function startGPS() {
+        if (!navigator.geolocation) {
+            alert("GPSがサポートされていません");
+            return;
+        }
+
+        watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                const speedMs = position.coords.speed; // m/s
+                // speedMsがnullの場合は0にする。m/s を km/h に変換 (x3.6)
+                const speedKmh = (speedMs && speedMs > 0) ? (speedMs * 3.6).toFixed(0) : 0;
+                speedEl.textContent = `${speedKmh} km/h`;
+            },
+            (err) => {
+                log("GPSエラー: " + err.message);
+            },
+            {
+                enableHighAccuracy: true,
+                maximumAge: 0,
+                timeout: 5000
+            }
+        );
+    }
+
+    // イベントリスナー設定
+    btnStart.addEventListener('click', async () => {
+        btnStart.style.display = 'none';
+        btnSave.style.display = 'block';
+        
+        await requestWakeLock();
+        await startCamera();
+        startGPS();
+    });
+
+    btnSave.addEventListener('click', () => {
+        triggerSave();
+    });
+
+    btnSwitch.addEventListener('click', async () => {
+        // カメラ切り替え
+        currentFacingMode = (currentFacingMode === 'environment') ? 'user' : 'environment';
+        if (stream) {
+            // レコーダーを一度止めて再起動する必要がある
+            if(mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            await startCamera();
+        }
+    });
+
+    // ページを離れるときにリソース解放
+    window.addEventListener('beforeunload', () => {
+        if (watchId) navigator.geolocation.clearWatch(watchId);
+    });
+
+</script>
+</body>
+</html>
